@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 
 from .models import PayoutRequest
 from .serializers import (
@@ -20,6 +20,15 @@ from .serializers import (
         description='Получение списка всех заявок с возможностью фильтрации и сортировки.',
         tags=['Платежи'],
         operation_id='1_payouts_list',
+        parameters=[
+            OpenApiParameter(
+                name='ordering',
+                description='Сортировка. Доступные поля: created_at, updated_at, amount. '
+                           'Для сортировки по убыванию добавьте "-" (например: -created_at)',
+                required=False,
+                type=str,
+            ),
+        ],
     ),
     retrieve=extend_schema(
         summary='Получение заявки',
