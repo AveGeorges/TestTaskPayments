@@ -200,3 +200,11 @@ LOGGING = {
         },
     },
 }
+
+import sys
+if 'test' in sys.argv:
+    LOGGING['loggers']['payments']['level'] = 'CRITICAL'
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+    if '--keepdb' not in sys.argv:
+        sys.argv.append('--keepdb')
