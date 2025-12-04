@@ -1,3 +1,252 @@
-from django.test import TestCase
+from decimal import Decimal
+from unittest.mock import patch
 
-# Create your tests here.
+from django.test import TestCase
+from django.contrib.auth import get_user_model
+from rest_framework.test import APITestCase
+from rest_framework import status
+
+from .models import PayoutRequest
+from .services import PayoutService
+
+User = get_user_model()
+
+
+class PayoutRequestModelTest(TestCase):
+    """Тесты модели PayoutRequest."""
+    
+    def test_create_payout_request(self):
+        """Тест создания заявки."""
+        payout = PayoutRequest.objects.create(
+            amount=Decimal('1000.00'),
+            currency='RUB',
+            recipient_details={'type': 'card', 'number': '4111111111111111'},
+            description='Test payment'
+        )
+        
+        self.assertIsNotNone(payout.external_id)
+        self.assertEqual(payout.status, PayoutRequest.Status.PENDING)
+        self.assertEqual(payout.amount, Decimal('1000.00'))
+    
+    def test_is_final_status(self):
+        """Тест проверки финального статуса."""
+        payout = PayoutRequest.objects.create(
+            amount=Decimal('100'),
+            currency='RUB',
+            recipient_details={'type': 'card', 'number': '4111111111111111'}
+        )
+        
+        self.assertFalse(payout.is_final_status)
+        
+        payout.status = PayoutRequest.Status.COMPLETED
+        self.assertTrue(payout.is_final_status)
+
+
+class PayoutAPITest(APITestCase):
+    """Тесты REST API."""
+    
+    def setUp(self):
+        """Создание админа для тестов."""
+        self.admin = User.objects.create_superuser(
+            username='admin',
+            email='admin@test.com',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=self.admin)
+        
+        self.valid_payload = {
+            'amount': '1500.00',
+            'currency': 'RUB',
+            'recipient_details': {
+                'type': 'card',
+                'number': '4111111111111111',
+                'holder': 'Test User'
+            },
+            'description': 'Test payout'
+        }
+    
+    @patch('payments.signals.process_payout_async.delay')
+    def test_create_payout_success(self, mock_celery):
+        """Тест успешного создания заявки."""
+        response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], 'pending')
+        self.assertEqual(response.data['currency'], 'RUB')
+        self.assertIn('external_id', response.data)
+    
+    @patch('payments.signals.process_payout_async.delay')
+    def test_celery_task_called_on_create(self, mock_celery):
+        """Тест вызова Celery-задачи при создании заявки."""
+        response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        
+        mock_celery.assert_called_once()
+        
+        call_args = mock_celery.call_args[0]
+        self.assertEqual(call_args[0], response.data['external_id'])
+    
+    @patch('payments.signals.process_payout_async.delay')
+    def test_create_payout_invalid_recipient(self, mock_celery):
+        """Тест валидации реквизитов получателя."""
+        invalid_payload = self.valid_payload.copy()
+        invalid_payload['recipient_details'] = {'invalid': 'data'}
+        
+        response = self.client.post('/api/v1/payouts/', invalid_payload, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('recipient_details', response.data)
+    
+    @patch('payments.signals.process_payout_async.delay')
+    def test_get_payout_by_external_id(self, mock_celery):
+        """Тест получения заявки по external_id."""
+        create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
+        external_id = create_response.data['external_id']
+        
+        response = self.client.get(f'/api/v1/payouts/{external_id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['external_id'], external_id)
+    
+    @patch('payments.signals.process_payout_async.delay')
+    def test_update_payout_status(self, mock_celery):
+        """Тест обновления статуса заявки."""
+        create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
+        external_id = create_response.data['external_id']
+        
+        response = self.client.patch(
+            f'/api/v1/payouts/{external_id}/',
+            {'status': 'processing'},
+            format='json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'processing')
+    
+    @patch('payments.signals.process_payout_async.delay')
+    def test_cannot_delete_processing_payout(self, mock_celery):
+        """Тест запрета удаления заявки в обработке."""
+        create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
+        external_id = create_response.data['external_id']
+        
+        PayoutRequest.objects.filter(external_id=external_id).update(
+            status=PayoutRequest.Status.PROCESSING
+        )
+        
+        response = self.client.delete(f'/api/v1/payouts/{external_id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('обработке', response.data['detail'])
+    
+    @patch('payments.signals.process_payout_async.delay')
+    def test_delete_pending_payout(self, mock_celery):
+        """Тест успешного удаления заявки в статусе pending."""
+        create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
+        external_id = create_response.data['external_id']
+        
+        response = self.client.delete(f'/api/v1/payouts/{external_id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(PayoutRequest.objects.filter(external_id=external_id).exists())
+    
+    def test_unauthorized_access(self):
+        """Тест запрета доступа без авторизации."""
+        self.client.force_authenticate(user=None)
+        
+        response = self.client.get('/api/v1/payouts/')
+        
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class PayoutServiceTest(TestCase):
+    """Тесты сервисного слоя."""
+    
+    def setUp(self):
+        """Создание тестовой заявки."""
+        self.payout = PayoutRequest.objects.create(
+            amount=Decimal('500.00'),
+            currency='USD',
+            recipient_details={'type': 'card', 'number': '4111111111111111'}
+        )
+    
+    def test_start_processing(self):
+        """Тест начала обработки заявки."""
+        result = PayoutService.start_processing(str(self.payout.external_id))
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, PayoutRequest.Status.PROCESSING)
+    
+    def test_start_processing_already_processed(self):
+        """Тест повторной обработки уже обработанной заявки."""
+        self.payout.status = PayoutRequest.Status.COMPLETED
+        self.payout.save()
+        
+        result = PayoutService.start_processing(str(self.payout.external_id))
+        
+        self.assertIsNone(result)
+    
+    def test_complete_payout(self):
+        """Тест успешного завершения выплаты."""
+        result = PayoutService.complete_payout(str(self.payout.external_id))
+        
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, PayoutRequest.Status.COMPLETED)
+    
+    def test_fail_payout(self):
+        """Тест неуспешного завершения выплаты."""
+        result = PayoutService.fail_payout(
+            str(self.payout.external_id),
+            'Insufficient funds'
+        )
+        
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, PayoutRequest.Status.FAILED)
+        self.assertIn('Insufficient funds', result.message)
+
+
+class PayoutTaskTest(TestCase):
+    """Тесты Celery задач."""
+    
+    def setUp(self):
+        """Создание тестовой заявки."""
+        self.payout = PayoutRequest.objects.create(
+            amount=Decimal('1000.00'),
+            currency='RUB',
+            recipient_details={'type': 'card', 'number': '4111111111111111'}
+        )
+    
+    @patch('payments.services.PayoutService.process_payment_gateway')
+    @patch('payments.services.PayoutService.validate_recipient')
+    def test_process_payout_async_success(self, mock_validate, mock_gateway):
+        """Тест успешной асинхронной обработки."""
+        from .tasks import process_payout_async
+        
+        async def mock_validate_coro(*args):
+            return True
+        
+        async def mock_gateway_coro(*args):
+            return True, 'Success'
+        
+        mock_validate.side_effect = mock_validate_coro
+        mock_gateway.side_effect = mock_gateway_coro
+        
+        result = process_payout_async(str(self.payout.external_id))
+        
+        self.assertEqual(result['status'], PayoutRequest.Status.COMPLETED)
+        self.assertTrue(result['success'])
+    
+    @patch('payments.services.PayoutService.process_payment_gateway')
+    @patch('payments.services.PayoutService.validate_recipient')
+    def test_process_payout_async_invalid_recipient(self, mock_validate, mock_gateway):
+        """Тест обработки с невалидными реквизитами."""
+        from .tasks import process_payout_async
+        
+        async def mock_validate_coro(*args):
+            return False
+        
+        mock_validate.side_effect = mock_validate_coro
+        
+        result = process_payout_async(str(self.payout.external_id))
+        
+        self.assertEqual(result['status'], PayoutRequest.Status.FAILED)
