@@ -1,5 +1,6 @@
 import logging
 
+from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
@@ -14,12 +15,16 @@ def on_payout_created(sender, instance: PayoutRequest, created: bool, **kwargs):
     if not created:
         return
     
-    from .tasks import process_payout_async
+    external_id = str(instance.external_id)
     
     logger.info(
-        f'[Signal] Заявка {instance.external_id} создана, '
+        f'[Signal] Заявка {external_id} создана, '
         f'запуск асинхронной обработки...'
     )
     
-    process_payout_async.delay(str(instance.external_id))
+    def send_task():
+        from .tasks import process_payout_async
+        process_payout_async.delay(external_id)
+    
+    transaction.on_commit(send_task)
 

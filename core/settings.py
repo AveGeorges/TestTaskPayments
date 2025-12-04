@@ -123,6 +123,7 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
@@ -146,6 +147,18 @@ SPECTACULAR_SETTINGS = {
     ],
     'COMPONENT_SPLIT_REQUEST': True,
     'SORT_OPERATIONS': True,
+    'SWAGGER_UI_SETTINGS': {
+        'persistAuthorization': True,
+    },
+    'SECURITY': [{'basicAuth': []}],
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'basicAuth': {
+                'type': 'http',
+                'scheme': 'basic',
+            }
+        }
+    },
 }
 
 # Celery
