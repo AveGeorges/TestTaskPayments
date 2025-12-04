@@ -51,11 +51,11 @@ class PayoutRequestViewSet(viewsets.ModelViewSet):
     ViewSet для управления заявками на выплату.
     
     Поддерживает все CRUD-операции:
-    - GET /api/payouts/ — список заявок
-    - GET /api/payouts/{external_id}/ — получение заявки
-    - POST /api/payouts/ — создание заявки
-    - PATCH /api/payouts/{external_id}/ — обновление заявки
-    - DELETE /api/payouts/{external_id}/ — удаление заявки
+    - GET /api/v1/payouts/ — список заявок
+    - GET /api/v1/payouts/{external_id}/ — получение заявки
+    - POST /api/v1/payouts/ — создание заявки (+ автозапуск Celery через signal)
+    - PATCH /api/v1/payouts/{external_id}/ — обновление заявки
+    - DELETE /api/v1/payouts/{external_id}/ — удаление заявки
     """
     queryset = PayoutRequest.objects.all()
     lookup_field = 'external_id'
@@ -74,6 +74,16 @@ class PayoutRequestViewSet(viewsets.ModelViewSet):
             return PayoutRequestUpdateSerializer
         return PayoutRequestSerializer
 
+    def create(self, request, *args, **kwargs):
+        """Создание заявки."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        payout = serializer.save()
+        
+        output_serializer = PayoutRequestSerializer(payout)
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+
     def get_object_for_update(self):
         """Получение объекта с блокировкой для обновления (защита от race condition)."""
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
@@ -90,7 +100,6 @@ class PayoutRequestViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         
-        # Возвращаем полные данные через основной сериализатор
         output_serializer = PayoutRequestSerializer(instance)
         return Response(output_serializer.data)
 

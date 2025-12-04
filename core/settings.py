@@ -203,29 +203,20 @@ UNFOLD = {
     ],
 }
 
-# Celery настройки
-# if env("DJANGO_ENV") == "production":
-#     # Для продакшена используем Redis в Docker
-#     CELERY_BROKER_URL = 'redis://redis:6379/0'
-#     CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
-# else:
-#     # Для разработки используем локальный Redis
-#     CELERY_BROKER_URL = 'redis://localhost:6379/0'
-#     CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
-# CELERY_BEAT_SCHEDULE = {
-#     'expire-pending-bookings-every-hour': {
-#         'task': 'bookings.tasks.expire_pending_bookings_task',
-#         'schedule': 3600,  # каждый час
-#     },
-# }
+if env("DJANGO_ENV") == "production":
+    CELERY_BROKER_URL = 'redis://redis:6379/0'
+    CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
+else:
+    CELERY_BROKER_URL = 'redis://localhost:6379/0'
+    CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
-# # Дополнительные настройки Celery для продакшена
-# CELERY_TASK_SERIALIZER = 'json'
-# CELERY_RESULT_SERIALIZER = 'json'
-# CELERY_ACCEPT_CONTENT = ['json']
-# CELERY_TIMEZONE = 'Europe/Moscow'
-# CELERY_ENABLE_UTC = True
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TIMEZONE = 'Europe/Moscow'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 60
 
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
