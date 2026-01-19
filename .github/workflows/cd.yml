@@ -1,0 +1,98 @@
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Запускается только если CI успешен или при push в main/tags
+    if: |
+      (github.event.workflow_run.conclusion == 'success' || 
+       github.event_name == 'push') &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+    
+    - name: Add server to known hosts
+      run: |
+        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+    
+    - name: Deploy to server
+      run: |
+        ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+          set -e
+          
+          echo "Starting deployment..."
+          
+          # Переход в директорию проекта
+          cd /opt/payout/app
+          
+          # Сохранение текущего состояния (для отката)
+          git stash || true
+          
+          # Определение версии для деплоя
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=$(echo "${{ github.ref }}" | sed 's/refs\/tags\///')
+            echo "Deploying version: $VERSION"
+            git fetch origin tag $VERSION
+            git checkout $VERSION
+          else
+            echo "Deploying from main branch"
+            git fetch origin
+            git reset --hard origin/main
+          fi
+          
+          # Применение миграций
+          echo "Running migrations..."
+          docker-compose exec -T web python manage.py migrate --noinput
+          
+          # Сбор статических файлов
+          echo "Collecting static files..."
+          docker-compose exec -T web python manage.py collectstatic --noinput
+          
+          # Пересборка и перезапуск контейнеров
+          echo "Rebuilding and restarting containers..."
+          docker-compose up -d --build
+          
+          # Проверка статуса контейнеров
+          echo "Checking container status..."
+          docker-compose ps
+          
+          echo "Deployment completed successfully"
+        EOF
+    
+    - name: Health check
+      run: |
+        echo "Waiting for services to start..."
+        sleep 15
+        echo "Checking health endpoint..."
+        curl -f https://${{ secrets.SERVER_HOST }}/api/v1/health/ || exit 1
+        echo "Health check passed!"
+    
+    - name: Notify deployment
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "✅ Deployment successful"
+        else
+          echo "❌ Deployment failed"
+        fi

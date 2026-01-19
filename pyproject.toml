@@ -1,0 +1,76 @@
+[tool.poetry]
+name = "test-task-payments"
+version = "1.0.0"
+description = "REST API для управления заявками на выплату с асинхронной обработкой через Celery"
+authors = ["AveGeorge <smoly1995@gmail.com>"]
+readme = "README.md"
+packages = [{include = "core"}, {include = "payments"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+Django = "^5.2.8"
+djangorestframework = "^3.16.1"
+celery = "^5.6.0"
+redis = "^7.1.0"
+psycopg2-binary = "^2.9.11"
+drf-spectacular = "^0.29.0"
+django-filter = "^25.2"
+django-cors-headers = "^4.9.0"
+django-environ = "^0.12.0"
+django-unfold = "^0.72.0"
+gunicorn = "^23.0.0"
+django-redis = "^5.4.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.0.0"
+flake8 = "^7.0.0"
+mypy = "^1.8.0"
+pytest = "^9.0.1"
+pytest-django = "^4.11.1"
+pytest-cov = "^7.0.0"
+coverage = "^7.12.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+target-version = ['py312']
+include = '\.pyi?$'
+exclude = '''
+/(
+  \.git
+  | \.venv
+  | venv
+  | migrations
+  | __pycache__
+)/
+'''
+
+[tool.flake8]
+max-line-length = 120
+exclude = [".git", "__pycache__", "migrations", ".venv", "venv"]
+ignore = ["E203", "E266", "E501", "W503"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+exclude = [
+    "migrations/",
+    "venv/",
+    ".venv/",
+    "__pycache__/",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "django.*",
+    "celery.*",
+    "rest_framework.*",
+    "drf_spectacular.*",
+]
+ignore_missing_imports = true

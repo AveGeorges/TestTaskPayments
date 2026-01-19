@@ -14,10 +14,10 @@ User = get_user_model()
 
 @patch('payments.tasks.process_payout_async.delay')
 class PayoutRequestModelTest(TestCase):
-    """Тесты модели PayoutRequest."""
+    """Tests for PayoutRequest model."""
     
     def test_create_payout_request(self, mock_celery):
-        """Тест создания заявки."""
+        """Test creation of payout request."""
         payout = PayoutRequest.objects.create(
             amount=Decimal('1000.00'),
             currency='RUB',
@@ -30,7 +30,7 @@ class PayoutRequestModelTest(TestCase):
         self.assertEqual(payout.amount, Decimal('1000.00'))
     
     def test_is_final_status(self, mock_celery):
-        """Тест проверки финального статуса."""
+        """Test checking final status."""
         payout = PayoutRequest.objects.create(
             amount=Decimal('100'),
             currency='RUB',
@@ -44,10 +44,10 @@ class PayoutRequestModelTest(TestCase):
 
 
 class PayoutAPITest(APITestCase):
-    """Тесты REST API."""
+    """Tests for REST API."""
     
     def setUp(self):
-        """Создание админа для тестов."""
+        """Creation of admin for tests."""
         self.admin, _ = User.objects.get_or_create(
             username='testadmin',
             defaults={
@@ -73,7 +73,7 @@ class PayoutAPITest(APITestCase):
     
     @patch('payments.tasks.process_payout_async.delay')
     def test_create_payout_success(self, mock_celery):
-        """Тест успешного создания заявки."""
+        """Test successful creation of payout request."""
         response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -83,7 +83,7 @@ class PayoutAPITest(APITestCase):
     
     @patch('payments.tasks.process_payout_async.delay')
     def test_celery_task_called_on_create(self, mock_celery):
-        """Тест вызова Celery-задачи при создании заявки."""
+        """Test calling Celery task on creation of payout request."""
         response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -95,7 +95,7 @@ class PayoutAPITest(APITestCase):
     
     @patch('payments.tasks.process_payout_async.delay')
     def test_create_payout_invalid_recipient(self, mock_celery):
-        """Тест валидации реквизитов получателя."""
+        """Test validation of recipient details."""
         invalid_payload = self.valid_payload.copy()
         invalid_payload['recipient_details'] = {'invalid': 'data'}
         
@@ -106,7 +106,7 @@ class PayoutAPITest(APITestCase):
     
     @patch('payments.tasks.process_payout_async.delay')
     def test_get_payout_by_external_id(self, mock_celery):
-        """Тест получения заявки по external_id."""
+        """Test getting payout request by external_id."""
         create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
         external_id = create_response.data['external_id']
         
@@ -117,7 +117,7 @@ class PayoutAPITest(APITestCase):
     
     @patch('payments.tasks.process_payout_async.delay')
     def test_update_payout_status(self, mock_celery):
-        """Тест обновления статуса заявки."""
+        """Test updating payout request status."""
         create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
         external_id = create_response.data['external_id']
         
@@ -132,7 +132,7 @@ class PayoutAPITest(APITestCase):
     
     @patch('payments.tasks.process_payout_async.delay')
     def test_cannot_delete_processing_payout(self, mock_celery):
-        """Тест запрета удаления заявки в обработке."""
+        """Test preventing deletion of payout request in processing status."""
         create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
         external_id = create_response.data['external_id']
         
@@ -147,7 +147,7 @@ class PayoutAPITest(APITestCase):
     
     @patch('payments.tasks.process_payout_async.delay')
     def test_delete_pending_payout(self, mock_celery):
-        """Тест успешного удаления заявки в статусе pending."""
+        """Test successful deletion of payout request in pending status."""
         create_response = self.client.post('/api/v1/payouts/', self.valid_payload, format='json')
         external_id = create_response.data['external_id']
         
@@ -157,7 +157,7 @@ class PayoutAPITest(APITestCase):
         self.assertFalse(PayoutRequest.objects.filter(external_id=external_id).exists())
     
     def test_unauthorized_access(self):
-        """Тест запрета доступа без авторизации."""
+        """Test preventing access without authorization."""
         self.client.force_authenticate(user=None)
         
         response = self.client.get('/api/v1/payouts/')
@@ -167,10 +167,10 @@ class PayoutAPITest(APITestCase):
 
 @patch('payments.tasks.process_payout_async.delay')
 class PayoutServiceTest(TestCase):
-    """Тесты сервисного слоя."""
+    """Tests for PayoutService."""
     
     def setUp(self):
-        """Создание тестовой заявки."""
+        """Creation of test payout request."""
         self.payout = PayoutRequest.objects.create(
             amount=Decimal('500.00'),
             currency='USD',
@@ -178,14 +178,14 @@ class PayoutServiceTest(TestCase):
         )
     
     def test_start_processing(self, mock_celery):
-        """Тест начала обработки заявки."""
+        """Test start of payout request processing."""
         result = PayoutService.start_processing(str(self.payout.external_id))
         
         self.assertIsNotNone(result)
         self.assertEqual(result.status, PayoutRequest.Status.PROCESSING)
     
     def test_start_processing_already_processed(self, mock_celery):
-        """Тест повторной обработки уже обработанной заявки."""
+        """Test reprocessing of already processed payout request."""
         self.payout.status = PayoutRequest.Status.COMPLETED
         self.payout.save()
         
@@ -194,14 +194,14 @@ class PayoutServiceTest(TestCase):
         self.assertIsNone(result)
     
     def test_complete_payout(self, mock_celery):
-        """Тест успешного завершения выплаты."""
+        """Test successful completion of payout."""
         result = PayoutService.complete_payout(str(self.payout.external_id))
         
         self.assertTrue(result.success)
         self.assertEqual(result.status, PayoutRequest.Status.COMPLETED)
     
     def test_fail_payout(self, mock_celery):
-        """Тест неуспешного завершения выплаты."""
+        """Test unsuccessful completion of payout."""
         result = PayoutService.fail_payout(
             str(self.payout.external_id),
             'Insufficient funds'

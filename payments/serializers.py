@@ -1,12 +1,22 @@
 from rest_framework import serializers
 
 from .models import PayoutRequest
+from .constants import (
+    MAX_PAYOUT_AMOUNT,
+    MIN_PAYOUT_AMOUNT,
+    RECIPIENT_TYPES,
+    MIN_CARD_NUMBER_LENGTH,
+    MIN_ACCOUNT_LENGTH,
+    MIN_WALLET_ID_LENGTH,
+)
+from .exceptions import (
+    PayoutAmountLimitError,
+    PayoutValidationError,
+)
 
 
 class PayoutRequestSerializer(serializers.ModelSerializer):
-    """
-    Сериализатор для заявки на выплату.
-    """
+    """Serializer for payout request"""
     status_display = serializers.CharField(
         source='get_status_display',
         read_only=True
@@ -27,19 +37,24 @@ class PayoutRequestSerializer(serializers.ModelSerializer):
             'status',
             'status_display',
             'description',
+            'idempotency_key',
             'created_at',
             'updated_at',
         ]
         read_only_fields = ['id', 'external_id', 'created_at', 'updated_at']
 
     def validate_amount(self, value):
-        """Валидация суммы выплаты."""
-        if value <= 0:
-            raise serializers.ValidationError('Сумма должна быть положительной.')
+        if value < MIN_PAYOUT_AMOUNT:
+            raise serializers.ValidationError(
+                f'Сумма должна быть не менее {MIN_PAYOUT_AMOUNT}.'
+            )
+        if value > MAX_PAYOUT_AMOUNT:
+            raise serializers.ValidationError(
+                f'Сумма не может превышать {MAX_PAYOUT_AMOUNT}.'
+            )
         return value
 
     def validate_recipient_details(self, value):
-        """Валидация реквизитов получателя."""
         if not isinstance(value, dict):
             raise serializers.ValidationError('Реквизиты должны быть объектом JSON.')
         
@@ -48,16 +63,34 @@ class PayoutRequestSerializer(serializers.ModelSerializer):
             if field not in value:
                 raise serializers.ValidationError(f'Поле "{field}" обязательно в реквизитах.')
         
-        valid_types = ['card', 'account', 'wallet']
-        if value.get('type') not in valid_types:
+        recipient_type = value.get('type')
+        if recipient_type not in RECIPIENT_TYPES:
             raise serializers.ValidationError(
-                f'Тип реквизитов должен быть одним из: {", ".join(valid_types)}.'
+                f'Тип реквизитов должен быть одним из: {", ".join(RECIPIENT_TYPES)}.'
             )
+        
+        if recipient_type == 'card':
+            number = value.get('number', '')
+            if not number or len(str(number)) < MIN_CARD_NUMBER_LENGTH:
+                raise serializers.ValidationError(
+                    f'Номер карты должен содержать не менее {MIN_CARD_NUMBER_LENGTH} символов.'
+                )
+        elif recipient_type == 'account':
+            account = value.get('account', '')
+            if not account or len(str(account)) < MIN_ACCOUNT_LENGTH:
+                raise serializers.ValidationError(
+                    f'Номер счёта должен содержать не менее {MIN_ACCOUNT_LENGTH} символов.'
+                )
+        elif recipient_type == 'wallet':
+            wallet_id = value.get('wallet_id', '')
+            if not wallet_id or len(str(wallet_id)) < MIN_WALLET_ID_LENGTH:
+                raise serializers.ValidationError(
+                    f'ID кошелька должен содержать не менее {MIN_WALLET_ID_LENGTH} символов.'
+                )
         
         return value
 
     def validate_status(self, value):
-        """Валидация статуса при обновлении."""
         if self.instance and self.instance.is_final_status:
             raise serializers.ValidationError(
                 'Нельзя изменить статус заявки, находящейся в финальном состоянии.'
@@ -66,29 +99,31 @@ class PayoutRequestSerializer(serializers.ModelSerializer):
 
 
 class PayoutRequestCreateSerializer(PayoutRequestSerializer):
-    """
-    Сериализатор для создания заявки (статус устанавливается автоматически).
-    """
+    """Serializer for creating payout request"""
+    idempotency_key = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_null=True,
+        help_text='Уникальный ключ для предотвращения дублирования заявок'
+    )
+    
     class Meta(PayoutRequestSerializer.Meta):
+        fields = PayoutRequestSerializer.Meta.fields + ['idempotency_key']
         read_only_fields = ['id', 'external_id', 'status', 'created_at', 'updated_at']
 
 
 class PayoutRequestUpdateSerializer(serializers.ModelSerializer):
-    """
-    Сериализатор для обновления заявки (только статус и описание).
-    """
+    """Serializer for updating payout request"""
     class Meta:
         model = PayoutRequest
         fields = ['status', 'description']
 
     def validate_status(self, value):
-        """Валидация перехода статуса."""
         if self.instance and self.instance.is_final_status:
             raise serializers.ValidationError(
                 'Нельзя изменить статус заявки, находящейся в финальном состоянии.'
             )
         
-        # Валидация допустимых переходов статусов
         if self.instance:
             current = self.instance.status
             allowed_transitions = {

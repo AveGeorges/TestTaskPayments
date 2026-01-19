@@ -9,331 +9,234 @@ REST API для управления заявками на выплату с а�
 - **Celery 5.6** — асинхронная обработка задач
 - **Redis** — брокер сообщений для Celery
 - **PostgreSQL** — база данных
-- **drf-spectacular** — документация API (Swagger)
-- **django-unfold** - админка unfold Django
 
 ---
 
-## Быстрый старт
+## Инструкция по запуску
 
-### 1. Клонирование и настройка окружения
+### 1. Установка зависимостей
 
 ```bash
 git clone <repository-url>
 cd TestTaskPayments
 
-# Создание виртуального окружения
 python -m venv .venv
-
-# Активация (Windows)
-.venv\Scripts\activate
-
-# Активация (Linux/Mac)
-source .venv/bin/activate
-
-# Установка зависимостей
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r req.txt
 ```
 
 ### 2. Настройка переменных окружения
 
-Создайте файл `.env` в корне проекта:
+Создайте файл `.env`:
 
 ```env
 SECRET_KEY=your-secret-key-here
 DEBUG=True
 DJANGO_ENV=development
-
-# База данных
-DATABASE_URL=postgresql://user:password@host/db_name?ATOMIC_REQUESTS=True
-
-# Настройки доступа
-ALLOWED_HOSTS=localhost,127.0.0.1,[::1]
-CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000
+DATABASE_URL=postgresql://user:password@localhost:5432/payout_db
+ALLOWED_HOSTS=localhost,127.0.0.1
+CSRF_TRUSTED_ORIGINS=http://localhost:8000
+CORS_ALLOWED_ORIGINS=http://localhost:8000
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
-### 3. Настройка базы данных
+### 3. Запуск миграций
 
 ```bash
-# Создайте базу данных PostgreSQL
-# Затем примените миграции:
 python manage.py migrate
-
-# Создайте суперпользователя
 python manage.py createsuperuser
 ```
 
 ### 4. Запуск Redis
 
-**Windows (через Docker):**
 ```bash
+# Windows (Docker)
 docker run -d -p 6379:6379 --name redis redis:alpine
-```
 
-**Linux/Mac:**
-```bash
+# Linux/Mac
 redis-server
 ```
 
-### 5. Запуск проекта
+### 5. Запуск приложения
 
-Откройте **3 терминала**:
-
-**Терминал 1 — Django сервер:**
+**Терминал 1 — Django:**
 ```bash
 python manage.py runserver
 ```
 
-**Терминал 2 — Celery worker:**
+**Терминал 2 — Celery:**
 ```bash
 celery -A core worker -l info -P solo
 ```
 
-**Терминал 3 — (опционально) дополнительные workers для параллельной обработки:**
-```bash
-celery -A core worker -l info -P solo -n worker2
-```
-
----
-
-## Использование API
-
-### Swagger документация
-
-После запуска откройте: **http://127.0.0.1:8000/api/v1/docs/**
-
-### Авторизация
-
-1. Войдите в Django Admin: **http://127.0.0.1:8000/admin/**
-2. Вернитесь в Swagger — сессия будет активна
-
-Или используйте **Basic Auth**:
-- Нажмите кнопку **Authorize** в Swagger
-- Введите логин/пароль суперпользователя
-
-### Endpoints
-
-| Метод | URL | Описание |
-|-------|-----|----------|
-| GET | `/api/v1/payouts/` | Список заявок |
-| POST | `/api/v1/payouts/` | Создание заявки |
-| GET | `/api/v1/payouts/{uuid}/` | Получение заявки |
-| PATCH | `/api/v1/payouts/{uuid}/` | Обновление статуса |
-| DELETE | `/api/v1/payouts/{uuid}/` | Удаление заявки |
-
-### Пример создания заявки
-
-```json
-{
-  "amount": "1500.00",
-  "currency": "RUB",
-  "recipient_details": {
-    "type": "card",
-    "number": "4111111111111111",
-    "holder": "Иван Иванов"
-  },
-  "description": "Тестовая выплата"
-}
-```
-
-### Фильтрация и сортировка
-
-```
-GET /api/v1/payouts/?status=pending
-GET /api/v1/payouts/?currency=RUB
-GET /api/v1/payouts/?ordering=-created_at
-GET /api/v1/payouts/?ordering=amount
-```
-
----
-
-## Архитектура
-
-### Структура проекта
-
-```
-TestTaskPayments/
-├── core/                   # Настройки Django
-│   ├── settings.py
-│   ├── celery.py          # Конфигурация Celery
-│   └── urls.py
-├── payments/              # Приложение выплат
-│   ├── models.py          # Модель PayoutRequest
-│   ├── views.py           # API ViewSet
-│   ├── serializers.py     # Сериализаторы
-│   ├── services.py        # Бизнес-логика
-│   ├── tasks.py           # Celery задачи
-│   ├── signals.py         # Django сигналы
-│   └── tests.py           # Тесты
-└── req.txt
-```
-
-### Поток обработки заявки
-
-```
-1. POST /api/v1/payouts/
-   ↓
-2. Django создаёт заявку (status: pending)
-   ↓
-3. Signal отправляет задачу в Celery (после commit)
-   ↓
-4. API возвращает 201 Created (мгновенно)
-   ↓
-5. Celery worker получает задачу
-   ↓
-6. PayoutService обрабатывает:
-   - Меняет статус на "processing"
-   - Валидирует реквизиты
-   - Отправляет в платёжный шлюз (имитация)
-   - Меняет статус на "completed" или "failed"
-```
-
-### Статусы заявки
-
-| Статус | Описание |
-|--------|----------|
-| `pending` | Ожидает обработки |
-| `processing` | В обработке |
-| `completed` | Выполнена успешно |
-| `failed` | Ошибка |
-| `cancelled` | Отменена |
-
----
-
-## Тестирование
-
-### Запуск всех тестов
+### 6. Запуск тестов
 
 ```bash
 python manage.py test payments
 ```
 
-### Запуск отдельных тестов
+**Доступ:**
+- API: http://localhost:8000/api/v1/docs/
+- Admin: http://localhost:8000/admin/
 
+**Подробнее:** `docs/LOCAL_SETUP_AND_TESTING.md`
+
+---
+
+## Деплой в продакшн
+
+### Представление деплоя
+
+**Архитектура:**
+```
+Nginx (reverse proxy, SSL) 
+  → Docker Compose
+    → web (Gunicorn + Django, 4+ workers)
+    → celery (Celery Workers, 4+ workers)
+    → db (PostgreSQL 13+)
+    → redis (Redis 7+, broker + cache)
+    → flower (Celery monitoring, опционально)
+```
+
+**Деплой:** Автоматический через CI/CD (GitHub Actions) при push в `main` или создании тега `v*`.
+
+### Необходимые сервисы
+
+1. **Docker** + **Docker Compose** — контейнеризация
+2. **PostgreSQL 13+** — основная база данных (в контейнере)
+3. **Redis 7+** — брокер для Celery и кэш (в контейнере)
+4. **Gunicorn** — WSGI сервер для Django (в контейнере)
+5. **Celery Workers** — обработка фоновых задач (в контейнере)
+6. **Nginx** — reverse proxy, SSL termination (на хосте или в контейнере)
+
+### Запуск Django и Celery в реальной системе
+
+**Через Docker Compose:**
+
+```yaml
+# docker-compose.yml
+services:
+  web:
+    build: .
+    command: gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    depends_on:
+      - db
+      - redis
+  
+  celery:
+    build: .
+    command: celery -A core worker --loglevel=info --concurrency=4
+    depends_on:
+      - db
+      - redis
+```
+
+**Управление:**
 ```bash
-# Тесты модели
-python manage.py test payments.tests.PayoutRequestModelTest
+# Запуск всех сервисов
+docker-compose up -d
 
-# Тесты API
-python manage.py test payments.tests.PayoutAPITest
+# Остановка
+docker-compose down
 
-# Тесты сервисов
-python manage.py test payments.tests.PayoutServiceTest
+# Просмотр логов
+docker-compose logs -f
+
+# Перезапуск после обновления
+docker-compose up -d --build
 ```
 
-### Что тестируется
+### Минимальные шаги по подготовке окружения
 
-- ✅ Создание заявки через API
-- ✅ Вызов Celery задачи при создании
-- ✅ Валидация данных (amount, recipient_details)
-- ✅ Получение/обновление/удаление по UUID
-- ✅ Запрет удаления заявок в статусе "processing"
-- ✅ Доступ только для админов
-- ✅ Бизнес-логика сервисного слоя
+1. **Установка Docker и Docker Compose:**
+   ```bash
+   sudo apt install docker.io docker-compose
+   sudo systemctl enable docker
+   sudo systemctl start docker
+   ```
+
+2. **Клонирование репозитория:**
+   ```bash
+   git clone <repository-url> /opt/payout/app
+   cd /opt/payout/app
+   ```
+
+3. **Настройка .env:**
+   ```env
+   DEBUG=False
+   DJANGO_ENV=production
+   SECRET_KEY=<generate-new-key>
+   DATABASE_URL=postgresql://payout_user:password@db:5432/payout_db
+   ALLOWED_HOSTS=yourdomain.com
+   CELERY_BROKER_URL=redis://redis:6379/0
+   CELERY_RESULT_BACKEND=redis://redis:6379/0
+   ```
+
+4. **Первый запуск:**
+   ```bash
+   docker-compose up -d
+   docker-compose exec web python manage.py migrate
+   docker-compose exec web python manage.py collectstatic --noinput
+   docker-compose exec web python manage.py createsuperuser
+   ```
+
+5. **Настройка Nginx (на хосте):**
+   ```nginx
+   upstream payout {
+       server 127.0.0.1:8000;  # Порт из docker-compose
+   }
+   server {
+       listen 80;
+       server_name yourdomain.com;
+       location / {
+           proxy_pass http://payout;
+       }
+   }
+   ```
+
+6. **SSL (Let's Encrypt):**
+   ```bash
+   sudo certbot --nginx -d yourdomain.com
+   ```
+
+### CI/CD деплой
+
+**Автоматический деплой через GitHub Actions:**
+
+- При push в `main` → автоматический деплой
+- При создании тега `v*` → деплой версии
+- Ручной деплой через GitHub UI (выбор версии)
+
+**Процесс:**
+1. CI запускает тесты и линтеры
+2. При успехе → CD подключается к серверу по SSH
+3. Обновляет код, пересобирает контейнеры
+4. Перезапускает `docker-compose up -d --build`
+5. Проверяет health check
+
+**Подробнее:** `docs/CD_SETUP.md` и `docs/DEPLOYMENT_GUIDE.md`
 
 ---
 
-## Проверка асинхронной обработки
+## API Endpoints
 
-### 1. Запустите несколько workers
+- `GET /api/v1/payouts/` — список заявок
+- `POST /api/v1/payouts/` — создание заявки
+- `GET /api/v1/payouts/{uuid}/` — получение заявки
+- `PATCH /api/v1/payouts/{uuid}/` — обновление заявки
+- `DELETE /api/v1/payouts/{uuid}/` — удаление заявки
+- `GET /api/v1/health/` — health check
 
-```bash
-# Терминал 1
-celery -A core worker -l info -P solo -n worker1
-
-# Терминал 2
-celery -A core worker -l info -P solo -n worker2
-
-# Терминал 3
-celery -A core worker -l info -P solo -n worker3
-```
-
-### 2. Создайте несколько заявок быстро
-
-Используйте Swagger для быстрого создания 5-10 заявок подряд.
-
-### 3. Наблюдайте за логами
-
-**Django** — мгновенные ответы:
-```
-INFO "POST /api/v1/payouts/" 201
-INFO "POST /api/v1/payouts/" 201
-INFO "POST /api/v1/payouts/" 201
-```
-
-**Celery workers** — параллельная обработка:
-```
-[worker1] Task received... обработка e89d617e
-[worker2] Task received... обработка dbadcc94  ← параллельно!
-[worker3] Task received... обработка 70eba8d9  ← параллельно!
-```
+Документация: http://localhost:8000/api/v1/docs/
 
 ---
 
-## Особенности реализации
+## Документация
 
-### Защита от race conditions
-
-- `select_for_update()` — блокировка строки при обновлении
-- `transaction.atomic()` — атомарные транзакции
-- `transaction.on_commit()` — отправка задачи только после коммита
-
-### Асинхронность
-
-- **Django → Celery** — API не ждёт обработки (главный эффект)
-- **Несколько workers** — параллельная обработка очереди
-- **asyncio внутри задачи** — неблокирующие I/O операции
-
-### Безопасность
-
-- `IsAdminUser` — доступ только для администраторов
-- `SessionAuthentication` + `BasicAuthentication`
-- CSRF защита для сессий
-
----
-
-## Полезные команды
-
-```bash
-# Запуск сервера
-python manage.py runserver
-
-# Celery worker
-celery -A core worker -l info -P solo
-
-# Миграции
-python manage.py makemigrations
-python manage.py migrate
-
-# Тесты
-python manage.py test payments
-
-# Создание суперпользователя
-python manage.py createsuperuser
-
-# Django shell
-python manage.py shell
-```
-
----
-
-## Возможные проблемы
-
-### Redis не запущен
-```
-Error connecting to localhost:6379
-```
-**Решение:** Запустите Redis через Docker или Memurai.
-
-### Ошибка CSRF
-```
-CSRF Failed: CSRF token incorrect
-```
-**Решение:** Обновите страницу Swagger (F5) или используйте Basic Auth.
-
-### База данных занята
-```
-database "test_tt_payments" is being accessed by other users
-```
-**Решение:** Перезапустите PostgreSQL или используйте `--keepdb`.
+- **`docs/LOCAL_SETUP_AND_TESTING.md`** — локальный запуск и тестирование
+- **`docs/DEPLOYMENT_GUIDE.md`** — подробное руководство по деплою
+- **`docs/CD_SETUP.md`** — настройка CI/CD
+- **`docs/PAYOUT_FLOW.md`** — путь заявки через систему
+- **`docs/DATABASE_OPTIMIZATION.md`** — оптимизация БД
+- **`docs/PROFILING_AND_MONITORING.md`** — профилирование и мониторинг

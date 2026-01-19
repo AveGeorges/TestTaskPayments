@@ -6,12 +6,9 @@ from django.core.validators import MinValueValidator
 
 
 class PayoutRequest(models.Model):
-    """
-    Модель заявки на выплату средств.
-    """
-
+    """Model for payout request"""
     class Status(models.TextChoices):
-        """Статусы заявки на выплату."""
+        """Statuses for payout request"""
         PENDING = 'pending', 'Ожидает обработки'
         PROCESSING = 'processing', 'В обработке'
         COMPLETED = 'completed', 'Выполнена'
@@ -19,7 +16,7 @@ class PayoutRequest(models.Model):
         CANCELLED = 'cancelled', 'Отменена'
 
     class Currency(models.TextChoices):
-        """Поддерживаемые валюты."""
+        """Currencies for payout request"""
         RUB = 'RUB', 'Российский рубль'
         USD = 'USD', 'Доллар США'
         EUR = 'EUR', 'Евро'
@@ -37,6 +34,16 @@ class PayoutRequest(models.Model):
         unique=True,
         verbose_name='Внешний идентификатор',
         help_text='UUID для идентификатора заявки во внешних системах'
+    )
+
+    idempotency_key = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='Ключ идемпотентности',
+        help_text='Уникальный ключ для предотвращения дублирования заявок'
     )
 
     amount = models.DecimalField(
@@ -91,6 +98,14 @@ class PayoutRequest(models.Model):
         indexes = [
             models.Index(fields=['status', 'created_at']),
             models.Index(fields=['currency']),
+            models.Index(fields=['idempotency_key']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='unique_idempotency_key'
+            ),
         ]
 
     def __str__(self):
@@ -98,5 +113,4 @@ class PayoutRequest(models.Model):
 
     @property
     def is_final_status(self) -> bool:
-        """Проверяет, находится ли заявка в финальном статусе."""
         return self.status in (self.Status.COMPLETED, self.Status.FAILED, self.Status.CANCELLED)

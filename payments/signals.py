@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender=PayoutRequest)
 def on_payout_created(sender, instance: PayoutRequest, created: bool, **kwargs):
-    """Запуск Celery задачи при создании заявки."""
     if not created:
         return
     
